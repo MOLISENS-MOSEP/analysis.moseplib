@@ -1,0 +1,15 @@
+lidar:
+  brand: Ouster
+  model: OS-1-64-U02,
+  lidar_mode: 1024x10,
+  timestamp_mode: TIME_FROM_INTERNAL_OSC,
+  udp_profile_lidar: RNG19_RFL8_SIG16_NIR16_DUAL
+radar:
+  brand: Smartmicro
+  model: UMRR-11 Type 132  
+# camera:
+#   brand: Raspberry Pi
+#   model: HQ Camera
+#   resolution: [960, 540]
+#   frame_rate: 10.0
+  
