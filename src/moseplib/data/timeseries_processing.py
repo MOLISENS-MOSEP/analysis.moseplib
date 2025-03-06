@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
-from src.data import config
+from moseplib.data import config
 
-
+import io
 from rich import print as rprint
 from rich.table import Table
 import pandas as pd
 from rich.pretty import pprint
 from pathlib import Path
+from PIL import Image
 
 # if config_variable == "highlevel":
 #     from rosbags.highlevel import AnyReader as ReaderClass
@@ -82,8 +83,10 @@ def get_topics_of_bagfile(bag_file, verbose=True):
         metadata["compression_format"] = reader.compression_format
         metadata["compression_mode"] = reader.compression_mode
         metadata["custom_data"] = reader.custom_data
-        metadata["start_time"] = pd.to_datetime(reader.start_time, unit="ns", origin="unix")
-        metadata["end_time"] = pd.to_datetime(reader.end_time, unit="ns", origin="unix")
+        metadata["start_time"] = pd.to_datetime(
+            reader.start_time, unit="ns", origin="unix")
+        metadata["end_time"] = pd.to_datetime(
+            reader.end_time, unit="ns", origin="unix")
         metadata["duration"] = pd.to_timedelta(reader.duration, unit="ns")
         # metadata["files"] = reader.files
         metadata["message_count"] = {}
@@ -93,7 +96,8 @@ def get_topics_of_bagfile(bag_file, verbose=True):
         # metadata["metadata"] = reader.metadata
 
         for topic in reader.metadata["topics_with_message_count"]:
-            metadata["message_count"][topic["topic_metadata"]["name"]] = topic["message_count"]
+            metadata["message_count"][topic["topic_metadata"]
+                                      ["name"]] = topic["message_count"]
 
     if verbose:
         rprint(table)
@@ -101,7 +105,7 @@ def get_topics_of_bagfile(bag_file, verbose=True):
     return metadata
 
 
-def msg_decoder(msg):
+def msg_decoder_lufft(msg):
     """Extracts data from a ROS message.
 
     Args:
@@ -123,7 +127,8 @@ def msg_decoder(msg):
 
             if field.endswith("_valid") and value == True:
                 measurement_name = field.rsplit("_", 1)[0]
-                msg_data[(msg_type, measurement_name)] = getattr(msg_content, measurement_name)
+                msg_data[(msg_type, measurement_name)] = getattr(
+                    msg_content, measurement_name)
 
     return msg_data
 
@@ -167,7 +172,8 @@ def get_data_deserialized(
             # print(msg.header.frame_id)
 
             if timestamp_source == "msg":
-                timestamp = pd.to_datetime(timestamp_msg, unit="ns", origin="unix")
+                timestamp = pd.to_datetime(
+                    timestamp_msg, unit="ns", origin="unix")
             if timestamp_source == "header":
                 timestamp = pd.to_datetime(
                     msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec,
@@ -176,10 +182,13 @@ def get_data_deserialized(
                 )
 
             if has_header:
-                data[timestamp] = msg_decoder(msg)
+                if msg.__msgtype__ == "lufft_wsx_interfaces/msg/LufftWSXXX":
+                    data[timestamp] = msg_decoder_lufft(msg)
+                elif msg.__msgtype__ == 'sensor_msgs/msg/CompressedImage':
+                    data[timestamp] = msg.data
             else:
                 data[timestamp] = msg
-    return data
+    return data, msg.__msgtype__
 
 
 def load(
@@ -187,17 +196,38 @@ def load(
     topic: str,
     path_to_custom_msgs: Path = None,
     timestamp_source: str = "header",
+    has_header: bool = True,
 ) -> pd.DataFrame:
     if topic not in get_topics_of_bagfile(bag_file, verbose=False)["topics"]:
         print(get_topics_of_bagfile(bag_file, verbose=True))
         raise ValueError(f"Topic {topic} not found in bag file.")
 
-    data = get_data_deserialized(bag_file, topic, path_to_custom_msgs, timestamp_source=timestamp_source)
-    df = pd.DataFrame(data).T
-    # Add level names for columns and rows
-    df.columns.names = ["Catgegory", "Parameter"]
-    df.index.names = ["Timestamp"]
-    return df
+    data, msg_type = get_data_deserialized(
+        bag_file, topic, path_to_custom_msgs, timestamp_source=timestamp_source, has_header=has_header)
+
+    if msg_type == "lufft_wsx_interfaces/msg/LufftWSXXX":
+        df = pd.DataFrame(data).T
+        # Add level names for columns and rows
+        df.columns.names = ["Catgegory", "Parameter"]
+        df.index.names = ["Timestamp"]
+        return df
+
+    elif msg_type == 'sensor_msgs/msg/CompressedImage':
+        return pd.DataFrame(pd.Series(data), columns=["CompressedImage"])
+    else:
+        raise ValueError(f"Message type {msg_type} not implemented.")
+
+
+def compressed_img_to_rgb(jpeg_data):
+    # Convert the 1D uint8 array to bytes
+    img_bytes = bytes(jpeg_data)
+
+    # Create a BytesIO object and load the image
+    img_buffer = io.BytesIO(img_bytes)
+    img = Image.open(img_buffer)
+
+    # Convert to RGB if needed (in case it's BGR)
+    return img.convert('RGB')
 
 
 if __name__ == "__main__":

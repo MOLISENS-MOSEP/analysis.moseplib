@@ -31,7 +31,8 @@ class Limits(NamedTuple):
         y_max = float("inf") if self.y_max is None else self.y_max
         z_min = float("-inf") if self.z_min is None else self.z_min
         z_max = float("inf") if self.z_max is None else self.z_max
-        r_min = float("-inf") if self.r_min is None else (self.r_min * 1e3)  # convert m to mm
+        # convert m to mm
+        r_min = float("-inf") if self.r_min is None else (self.r_min * 1e3)
         r_max = float("inf") if self.r_max is None else (self.r_max * 1e3)
 
         return (
@@ -155,7 +156,8 @@ def get_pointcloud_from_timestamp(ds: Dataset, timestamp: str, position: str = "
     Returns:
         PointCloud: The PointCloud closest to the given timestamp.
     """
-    closest = take_closest(ds.timestamps, pd.to_datetime(timestamp), position=position)
+    closest = take_closest(ds.timestamps, pd.to_datetime(
+        timestamp), position=position)
     return ds[ds._get_pointcloud_number_from_time(closest)]
 
 
@@ -187,7 +189,8 @@ def normalize_df(df: pd.DataFrame, kind: str = "standard", fillna: bool = False)
     elif kind == "minmax":
         result = (df - df.min()) / (df.max() - df.min())
     else:
-        raise ValueError(f"Normalization kind {kind} not supported. Use 'standard' or 'minmax'.")
+        raise ValueError(
+            f"Normalization kind {kind} not supported. Use 'standard' or 'minmax'.")
 
     if fillna:
         return result.fillna(0)
@@ -220,10 +223,37 @@ def flatten_multiindex(df: pd.DataFrame, sep: str = ".", levels: int = 1) -> Uni
         if not isinstance(df.columns, pd.MultiIndex):
             raise ValueError("DataFrame does not have a MultiIndex column.")
         original_columns = df.columns.copy()
-        df.columns = [sep.join(map(str, col)).strip() for col in df.columns.values]
+        df.columns = [sep.join(map(str, col)).strip()
+                      for col in df.columns.values]
         return original_columns
     else:
         raise ValueError("Levels parameter must be 0 or 1.")
+
+
+def subsample_part(frame: PointCloud, axes: str, direction: str, value: float, n: int) -> PointCloud:
+    """Subsamples part of a PointCloud based on a given axis and value.
+
+    The PointCloud is split along the given axis and the part above or below the value is subsampled to `n` points.
+    The other part is kept as is.
+
+    Args:
+        frame (PointCloud): The PointCloud to subsample.
+        axes (str): Dimension along which to split the PointCloud.
+        direction (str): Subsample above or below the value.
+        value (float): The threshold value.
+        n (int): Target number of points in the subsampled part.
+
+    Returns:
+        PointCloud: The partly subsampled PointCloud.
+    """
+
+    if direction == "above":
+        frame_a = frame.limit_greater(axes, value).random_down_sample(n)
+        frame_b = frame.filter("value", axes, "<=", value)
+    elif direction == "below":
+        frame_a = frame.limit_less(axes, value).random_down_sample(n)
+        frame_b = frame.filter("value", axes, ">=", value)
+    return PointCloud.from_instance("PANDAS", pd.concat([frame_a.data, frame_b.data]).reset_index(drop=True))
 
 
 if __name__ == "__main__":
