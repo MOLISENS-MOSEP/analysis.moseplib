@@ -256,6 +256,24 @@ def subsample_part(frame: PointCloud, axes: str, direction: str, value: float, n
     return PointCloud.from_instance("PANDAS", pd.concat([frame_a.data, frame_b.data]).reset_index(drop=True))
 
 
+def transform_xyz(pc: PointCloud, xyz: tuple) -> PointCloud:
+    """Apply a translation to the pointcloud to account for transforms in ROS.
+
+    Args:
+        pc (pcs.PointCloud): The pointcloud to be transformed.
+        xyz (tuple): A tuple of the x, y, z translation to be applied.
+
+    Returns:
+        pcs.PointCloud: The transformed pointcloud.
+    """
+    df = pc.data
+    df['x'] = df['x'] + xyz[0]
+    df['y'] = df['y'] + xyz[1]
+    df['z'] = df['z'] + xyz[2]
+
+    return PointCloud.from_instance("PANDAS", df)
+
+
 if __name__ == "__main__":
     limits = Limits(x_min=0, x_max=10, y_min=0, y_max=10, z_min=0, z_max=10)
     print(limits.get_vertices_from_limits())
