@@ -1,7 +1,10 @@
 from bisect import bisect_left, bisect_right
+import operator
+from typing import NamedTuple, Union
+
+import numpy as np
 import pandas as pd
 from pointcloudset import PointCloud, Dataset
-from typing import NamedTuple, Union
 
 
 class Limits(NamedTuple):
@@ -13,10 +16,12 @@ class Limits(NamedTuple):
     z_max: Union[float, None] = None
     r_min: Union[float, None] = None
     r_max: Union[float, None] = None
+    i_min: Union[float, None] = None
+    i_max: Union[float, None] = None
 
     def apply_limits(self, pc: PointCloud) -> PointCloud:
         """
-        Applies limits to a PointCloud object along the x, y, and z dimensions.
+        Applies limits to a PointCloud object along the x, y, and z dimensions as well as in range and intensity.
 
         Args:
             pc (PointCloud): The PointCloud object to apply the limits to.
@@ -34,13 +39,26 @@ class Limits(NamedTuple):
         # convert m to mm
         r_min = float("-inf") if self.r_min is None else (self.r_min * 1e3)
         r_max = float("inf") if self.r_max is None else (self.r_max * 1e3)
+        i_min = float("-inf") if self.i_min is None else self.i_min
+        i_max = float("inf") if self.i_max is None else self.i_max
 
         return (
             pc.limit(dim="x", minvalue=x_min, maxvalue=x_max)
             .limit(dim="y", minvalue=y_min, maxvalue=y_max)
             .limit(dim="z", minvalue=z_min, maxvalue=z_max)
             .limit(dim="range", minvalue=r_min, maxvalue=r_max)
+            .limit(dim="intensity", minvalue=i_min, maxvalue=i_max)
         )
+
+    def apply_exclude(self, pc: PointCloud) -> PointCloud:
+        x_min = self.x_min if self.x_min is not None else float("-inf")
+        x_max = self.x_max if self.x_max is not None else float("inf")
+        y_min = self.y_min if self.y_min is not None else float("-inf")
+        y_max = self.y_max if self.y_max is not None else float("inf")
+        z_min = self.z_min if self.z_min is not None else float("-inf")
+        z_max = self.z_max if self.z_max is not None else float("inf")
+
+        return xyz_exclude(pc, x_min, x_max, y_min, y_max, z_min, z_max)
 
     def replace(self, **kwargs):
         """
@@ -156,8 +174,7 @@ def get_pointcloud_from_timestamp(ds: Dataset, timestamp: str, position: str = "
     Returns:
         PointCloud: The PointCloud closest to the given timestamp.
     """
-    closest = take_closest(ds.timestamps, pd.to_datetime(
-        timestamp), position=position)
+    closest = take_closest(ds.timestamps, pd.to_datetime(timestamp), position=position)
     return ds[ds._get_pointcloud_number_from_time(closest)]
 
 
@@ -189,8 +206,7 @@ def normalize_df(df: pd.DataFrame, kind: str = "standard", fillna: bool = False)
     elif kind == "minmax":
         result = (df - df.min()) / (df.max() - df.min())
     else:
-        raise ValueError(
-            f"Normalization kind {kind} not supported. Use 'standard' or 'minmax'.")
+        raise ValueError(f"Normalization kind {kind} not supported. Use 'standard' or 'minmax'.")
 
     if fillna:
         return result.fillna(0)
@@ -223,8 +239,7 @@ def flatten_multiindex(df: pd.DataFrame, sep: str = ".", levels: int = 1) -> Uni
         if not isinstance(df.columns, pd.MultiIndex):
             raise ValueError("DataFrame does not have a MultiIndex column.")
         original_columns = df.columns.copy()
-        df.columns = [sep.join(map(str, col)).strip()
-                      for col in df.columns.values]
+        df.columns = [sep.join(map(str, col)).strip() for col in df.columns.values]
         return original_columns
     else:
         raise ValueError("Levels parameter must be 0 or 1.")
@@ -267,11 +282,53 @@ def transform_xyz(pc: PointCloud, xyz: tuple) -> PointCloud:
         pcs.PointCloud: The transformed pointcloud.
     """
     df = pc.data
-    df['x'] = df['x'] + xyz[0]
-    df['y'] = df['y'] + xyz[1]
-    df['z'] = df['z'] + xyz[2]
+    df["x"] = df["x"] + xyz[0]
+    df["y"] = df["y"] + xyz[1]
+    df["z"] = df["z"] + xyz[2]
 
     return PointCloud.from_instance("PANDAS", df)
+
+
+def value_exclude(pc: PointCloud, dim: str, minvalue: float, maxvalue: float) -> PointCloud:
+    """
+    Exclude points from a point cloud based on a given dimension and value range.
+    Does the opposite of filter_value.
+
+    Args:
+        pc (PointCloud): The input point cloud.
+        dim (str): The dimension to filter on.
+        minvalue (float): The minimum value for exclusion.
+        maxvalue (float): The maximum value for exclusion.
+    Returns:
+        PointCloud: A new point cloud with points excluded based on the given dimension and value range.
+    """
+    if maxvalue < minvalue:
+        raise ValueError("maxvalue must be greater than minvalue")
+    pc1 = pc.filter("value", dim, "<", minvalue)
+    pc2 = pc.filter("value", dim, ">", maxvalue)
+    return PointCloud.from_instance("PANDAS", pd.concat([pc1.data, pc2.data]).reset_index(drop=True))
+
+
+def xyz_exclude(
+    pointcloud: PointCloud, x_min: float, x_max: float, y_min: float, y_max: float, z_min: float, z_max: float
+) -> PointCloud:
+    """Exclude points from a pointcloud based on their x, y, and z coordinates.
+
+    Keyword arguments:
+    argument -- description
+    Return: return_description
+    """
+
+    bool_array = (
+        operator.lt(pointcloud.data["x"], x_min)
+        | operator.gt(pointcloud.data["x"], x_max)
+        | operator.lt(pointcloud.data["y"], y_min)
+        | operator.gt(pointcloud.data["y"], y_max)
+        | operator.lt(pointcloud.data["z"], z_min)
+        | operator.gt(pointcloud.data["z"], z_max)
+    ).to_numpy()
+
+    return pointcloud.apply_filter(bool_array)
 
 
 if __name__ == "__main__":
