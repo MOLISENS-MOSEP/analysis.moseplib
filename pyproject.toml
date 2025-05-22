@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-    { name = "Christoph Gaisberger", email = "chrisi@all-crew.com" }
+    { name = "Christoph Gaisberger", email = "Christoph.gaisberger@gmail.com" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.12"
 dependencies = [
     "pandas>=2.2.3",
     "pointcloudset>=0.9.0",
