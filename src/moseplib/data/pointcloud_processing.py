@@ -3,10 +3,12 @@
 # from src.data import config
 
 from pathlib import Path
+from typing import Callable
 import warnings
 
 import pandas as pd
 from pointcloudset import Dataset, PointCloud
+from pointcloudset.pipeline.delayed_result import DelayedResult
 from rich import print as rprint
 from tqdm import tqdm
 
@@ -20,8 +22,7 @@ def print_stats(bag_path, dataset):
     print(f"end =      {dataset.end_time}")
     print(f"duration = {dataset.duration}")
     print(f"length =   {len(dataset)}")
-    freq = len(dataset) / (dataset.duration.seconds +
-                           dataset.duration.microseconds / 1e6)
+    freq = len(dataset) / (dataset.duration.seconds + dataset.duration.microseconds / 1e6)
     print(f"avg frequency =  {freq:.2f} Hz")
 
 
@@ -31,9 +32,9 @@ def load_pointcloudset(
     topic: str,
     safe_parquet: bool = True,
     keep_zeros: bool = False,
-    invert_axes=None,
-    verbose=False,
-) -> Dataset:
+    invert_axes: list[str] | None = None,
+    verbose: bool = False,
+) -> Dataset | DelayedResult:
     """
     Load a point cloud dataset from a ROS bag file.
 
@@ -56,8 +57,7 @@ def load_pointcloudset(
     data_dir = Path(data_dir)
     bag_path = data_dir / bag_name
 
-    pointcloudset_path = data_dir / "pointcloudset" / \
-        topic[1:].replace("/", "_") / bag_name
+    pointcloudset_path = data_dir / "pointcloudset" / topic[1:].replace("/", "_") / bag_name
     if verbose:
         rprint(f"Searching for pointcloudset files in:\n{pointcloudset_path}")
 
@@ -65,8 +65,7 @@ def load_pointcloudset(
         print(f"No pointcloudset files found for topic: {topic}.")
 
         if not bag_path.exists():
-            raise FileNotFoundError(
-                f"No pointcloudset files found and {bag_path} does not exist")
+            raise FileNotFoundError(f"No pointcloudset files found and {bag_path} does not exist")
 
         if not safe_parquet:
             # Calculate on the fly
@@ -90,13 +89,14 @@ def load_pointcloudset(
     if invert_axes:
         if not isinstance(invert_axes, list):
             raise TypeError("invert_axes must be a list")
-        missing_axis = [
-            elem for elem in invert_axes if elem not in dataset.daskdataframe.columns]
-        if missing_axis:
-            raise ValueError(
-                f"These axis are not in present in dataset: {missing_axis}")
-        print("Inverting axes:", invert_axes)
-        dataset = dataset.apply(_invert_axes, axes=invert_axes)
+        if isinstance(dataset, Dataset):
+            missing_axis = [elem for elem in invert_axes if elem not in dataset.daskdataframe.columns]
+            if missing_axis:
+                raise ValueError(f"These axis are not in present in dataset: {missing_axis}")
+            print("Inverting axes:", invert_axes)
+            dataset = dataset.apply(_invert_axes, axes=invert_axes)  # type: ignore
+        else:
+            warnings.warn("invert_axes is ignored for delayed datasets. Compute the dataset first to use invert_axes.")
 
     return dataset
 
@@ -122,7 +122,7 @@ def get_dataset_statistics(dataset: Dataset):
     pass
 
 
-def resample_dataset(ds: Dataset, resampling_period: str, statistics: list = None) -> dict[Dataset]:
+def resample_dataset(ds: Dataset, resampling_period: str, extra_statistics: list | None = None) -> dict[str, Dataset]:
     """Resample a dataset to a given period and calculate statistics for each resampled point cloud.
 
     Args:
@@ -139,16 +139,16 @@ def resample_dataset(ds: Dataset, resampling_period: str, statistics: list = Non
     """
 
     # Ensure that mean is always calculated. Necessary for positioning aggregated points in space (  x, y, z values).
-    statistics.append("mean")
+    statistics = ["mean"]
+    if extra_statistics is not None:
+        statistics.extend(extra_statistics)
     # Check if timestamps are monotonically increasing
     if not pd.Series(ds.timestamps).is_monotonic_increasing:
-        raise ValueError(
-            "Timestamps are not monotonically increasing. This is a prerequisite for resampling.")
+        raise ValueError("Timestamps are not monotonically increasing. This is a prerequisite for resampling.")
 
     # Resample the timestampas of the dataset and get indices of the PointClouds to aggregate
     agg_inds = (
-        pd.DataFrame({"pc_index": range(len(ds.timestamps))},
-                     index=pd.DatetimeIndex(ds.timestamps))
+        pd.DataFrame({"pc_index": range(len(ds.timestamps))}, index=pd.DatetimeIndex(ds.timestamps))
         .resample(resampling_period)
         .agg(["first", "last"])
     )
@@ -158,17 +158,13 @@ def resample_dataset(ds: Dataset, resampling_period: str, statistics: list = Non
     # Loop over indices
     for ts, ind in tqdm(agg_inds.iterrows(), total=len(agg_inds)):
         # Retrieve a subset of the dataset corresponding to the resampled timestamp
-        sub_ds = ds[
-            ind["pc_index", "first"]: ind["pc_index", "last"]
-            + 1
-            # Maybe use timestamps instead of indices (.get_pointclouds_between_timestamps)
-        ]
+        # Maybe use timestamps instead of indices (.get_pointclouds_between_timestamps)
+        sub_ds = ds[ind["pc_index", "first"] : ind["pc_index", "last"] + 1]
         # Aggregate PointClouds in the subset
-        df_all_stats = sub_ds.agg(statistics, "point")
+        df_all_stats = sub_ds.agg(statistics, "point")  # type: ignore
 
         # Retrive the mean x, y, z, range, ring values to be used in all Datasets (i.e. sum and std make no sense)
-        xyz = df_all_stats.loc(
-            axis=1)[["x", "y", "z", "range", "ring"], "mean"]
+        xyz = df_all_stats.loc(axis=1)[["x", "y", "z", "range", "ring"], "mean"]
         xyz.columns = xyz.columns.droplevel(1)
 
         # Create a DataFrame for each statistic
@@ -177,16 +173,16 @@ def resample_dataset(ds: Dataset, resampling_period: str, statistics: list = Non
             # Update the DataFrame with the mean x, y, z values
             df.update(xyz)
             # concatenate the N and original_id columns
-            df = pd.concat(
-                [df, df_all_stats.N, df_all_stats.original_id], axis=1)
+            df = pd.concat([df, df_all_stats.N, df_all_stats.original_id], axis=1)
             # Convert to PointCloud and append to the list
-            ds_resampled[stat].append(PointCloud(df, timestamp=ts))
+            df.reset_index(inplace=True)  # added to account for breaking change in pointcloudset > 0.9.0.
+            ds_resampled[stat].append(PointCloud(df, timestamp=ts))  # type: ignore
 
     return {key: Dataset.from_instance("pointclouds", value) for key, value in ds_resampled.items()}
 
 
 def subset_and_aggregate_dataset(
-    dataset: Dataset, splits: dict[str, dict[str, Limits]], agg_func: callable = None, return_type: dict = "dict"
+    dataset: Dataset, splits: dict[str, dict[str, Limits]], agg_func: Callable | None = None, return_type: str = "dict"
 ) -> dict | pd.DataFrame | None:
     """
     Aggregates a dataset of point clouds into a single DataFrame.
@@ -197,8 +193,8 @@ def subset_and_aggregate_dataset(
 
     Args:
         dataset (pointcloudset.Dataset): The input dataset of point clouds.
-        limits_dict (dict[dict]): A dictionary defining the limits for subsets. The keys should be subset names and the values
-            should be dictionaries mapping column names to limit objects.
+        limits_dict (dict[dict]): A dictionary defining the limits for subsets. The keys should be subset names and the
+            values should be dictionaries mapping column names to limit objects.
         agg_func (callable): An aggregation function to apply to each subset in the point clouds. This function should
             take a pandas Series as input and return a single value.
         return_type (str, optional): The type of the output. If "dict", the function returns a dictionary. If "df", the
@@ -218,9 +214,9 @@ def subset_and_aggregate_dataset(
 
     if _depth(splits) == 1:
         for target_name, target_limits in splits.items():
-            rd = dataset.apply(target_limits.apply_limits)
+            rd = dataset.apply(target_limits.apply_limits)  # type: ignore
             if agg_func:
-                rd = pd.concat(rd.apply(agg_func))
+                rd = pd.concat(rd.apply(agg_func))  # type: ignore
             result_dict[target_name] = rd
 
         if not agg_func or return_type == "dict":
@@ -235,7 +231,7 @@ def subset_and_aggregate_dataset(
                 with warnings.catch_warnings(record=True):
                     rd = dataset.apply(target_limits.apply_limits)
                     if agg_func:
-                        rd = pd.concat(rd.apply(agg_func))
+                        rd = pd.concat(rd.apply(agg_func))  # type: ignore
                     result_dict[target_name][col] = rd
 
         if not agg_func or return_type == "dict":

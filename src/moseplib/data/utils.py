@@ -8,16 +8,18 @@ from pointcloudset import PointCloud, Dataset
 
 
 class Limits(NamedTuple):
-    x_min: Union[float, None] = None
-    x_max: Union[float, None] = None
-    y_min: Union[float, None] = None
-    y_max: Union[float, None] = None
-    z_min: Union[float, None] = None
-    z_max: Union[float, None] = None
-    r_min: Union[float, None] = None
-    r_max: Union[float, None] = None
-    i_min: Union[float, None] = None
-    i_max: Union[float, None] = None
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    z_min: float | None = None
+    z_max: float | None = None
+    r_min: float | None = None
+    r_max: float | None = None
+    i_min: float | None = None
+    i_max: float | None = None
+    n_min: float | None = None
+    n_max: float | None = None
 
     def apply_limits(self, pc: PointCloud) -> PointCloud:
         """
@@ -41,6 +43,8 @@ class Limits(NamedTuple):
         r_max = float("inf") if self.r_max is None else (self.r_max * 1e3)
         i_min = float("-inf") if self.i_min is None else self.i_min
         i_max = float("inf") if self.i_max is None else self.i_max
+        n_min = float("-inf") if self.n_min is None else self.n_min
+        n_max = float("inf") if self.n_max is None else self.n_max
 
         return (
             pc.limit(dim="x", minvalue=x_min, maxvalue=x_max)
@@ -48,6 +52,7 @@ class Limits(NamedTuple):
             .limit(dim="z", minvalue=z_min, maxvalue=z_max)
             .limit(dim="range", minvalue=r_min, maxvalue=r_max)
             .limit(dim="intensity", minvalue=i_min, maxvalue=i_max)
+            .limit(dim="N", minvalue=n_min, maxvalue=n_max)
         )
 
     def apply_exclude(self, pc: PointCloud) -> PointCloud:
