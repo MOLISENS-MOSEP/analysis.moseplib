@@ -7,18 +7,20 @@ import yaml
 
 import frontmatter
 from matplotlib import pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 from rich import print as rprint
 from rich.progress import track
 
 from moseplib.tools.fix_ros2_metadata_file import fix_timestamp_order
-from moseplib.data import timeseries_processing, config
+from moseplib.data import timeseries_processing, config, read_rosbag
 
 
 # * Note that multiple metadata concepts appear in this script:
 # * - First, there is the metadata that is extracted from the bagfile itself in this script containing the met data.
 # * - Second, there is the metadata file that is created by ROS2 when a bagfile is recorded.
-# * - Third, the Ouster sensor has its own metadata file that is stored in the bagfile usually named: ouster_metadata.txt.
+# * - Third, the Ouster sensor has its own metadata file that is stored in the bagfile usually named:
+# *   ouster_metadata.txt.
 
 
 def get_total_mcap_size(directory):
@@ -33,7 +35,7 @@ def get_total_mcap_size(directory):
         return f"{total_size} bytes"
 
 
-def extract_metadata(bag_path: Union[str, Path]) -> Tuple[dict, plt.Figure]:
+def extract_metadata(bag_path: Union[str, Path]) -> dict[str, object]:
     """
     Extracts metadata from a ROS bag file and creates a precipitation plot.
 
@@ -51,7 +53,7 @@ def extract_metadata(bag_path: Union[str, Path]) -> Tuple[dict, plt.Figure]:
     """
 
     bag_path = Path(bag_path)
-    meta = {"note_type": "measurement", "bag_size": get_total_mcap_size(bag_path)}
+    meta: dict[str, object] = {"note_type": "measurement", "bag_size": get_total_mcap_size(bag_path)}
 
     df = timeseries_processing.load(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
     precip_stats = {
@@ -63,7 +65,7 @@ def extract_metadata(bag_path: Union[str, Path]) -> Tuple[dict, plt.Figure]:
     meta["precipitation_intensity_hour"] = precip_stats
 
     # Get the topics and additional metadata form bagfile
-    topics = timeseries_processing.get_topics_of_bagfile(bag_path, verbose=False)
+    topics = read_rosbag.get_topics_of_bagfile(bag_path, verbose=False)
     # Stringify the datetime objects
     topics["start_time"] = topics["start_time"].strftime("%Y-%m-%d %H:%M:%S")
     topics["end_time"] = topics["end_time"].strftime("%Y-%m-%d %H:%M:%S")
@@ -73,6 +75,12 @@ def extract_metadata(bag_path: Union[str, Path]) -> Tuple[dict, plt.Figure]:
     # Add a empty comment field
     meta["comment"] = ""
 
+    return meta
+
+
+def plot_precipitation_data(bag_path: Union[str, Path]) -> Figure:
+    bag_path = Path(bag_path)
+    df = timeseries_processing.load(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
     fig = plt.figure(figsize=(12, 20))
     plot_data = df.precipitation.loc[:, "absolute":"hail_particles"]
     axs = plot_data.plot(
@@ -85,10 +93,10 @@ def extract_metadata(bag_path: Union[str, Path]) -> Tuple[dict, plt.Figure]:
     )
     plt.tight_layout()
 
-    return meta, fig
+    return fig
 
 
-def save_dict_to_markdown(data_dict: dict, output_path: Union[str, Path], overwrite: str = False) -> None:
+def save_dict_to_markdown(data_dict: dict, output_path: Union[str, Path], overwrite: str | bool = False) -> None:
     """
     Saves a dictionary to a Markdown file.
 
@@ -212,7 +220,8 @@ def main(
             rprint(f"Repairing {bag_path}/metadata.yaml")
             fix_timestamp_order(bag_path)
 
-        meta, precip_plot = extract_metadata(bag_path)
+        meta = extract_metadata(bag_path)
+        precip_plot = plot_precipitation_data(bag_path)
 
         # Add an optional dictionary to also include in the metadata file. Default is None.
         if entry:

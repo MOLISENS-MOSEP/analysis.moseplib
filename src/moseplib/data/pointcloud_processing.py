@@ -12,18 +12,60 @@ from pointcloudset.pipeline.delayed_result import DelayedResult
 from rich import print as rprint
 from tqdm import tqdm
 
-from moseplib.data import extract_pcs_from_bagfile
 from moseplib.data.utils import Limits
 
 
 def print_stats(bag_path, dataset):
-    print(f"Dataset loaded from:\n{bag_path}")
-    print(f"start =    {dataset.start_time}")
-    print(f"end =      {dataset.end_time}")
-    print(f"duration = {dataset.duration}")
-    print(f"length =   {len(dataset)}")
     freq = len(dataset) / (dataset.duration.seconds + dataset.duration.microseconds / 1e6)
-    print(f"avg frequency =  {freq:.2f} Hz")
+
+    rprint(
+        f"Dataset loaded from:\n{bag_path}\n\n",
+        f"start =    {dataset.start_time}\n",
+        f"end =      {dataset.end_time}\n",
+        f"duration = {dataset.duration}\n",
+        f"length =   {len(dataset)}\n",
+        f"avg frequency =  {freq:.2f} Hz",
+    )
+
+
+def extract_pc_from_bagfile(bag_file: Path, topics: list, verbose: bool = False) -> None:
+    """
+    Extracts point clouds from a ROS bag file.
+
+    Args:
+        bag_file: The path to the ROS bag file to extract point clouds from.
+        topics: A list of ROS topics to extract point clouds from.
+        verbose: If True, print progress messages to the console. Default is False.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the input bag file does not exist.
+
+    Notes:
+        This function uses the `rosbag` library to extract point clouds from a ROS bag file.
+        The extracted point clouds are saved to disk as `.ply` files in the same directory as the input bag file.
+    """
+
+    bag_file = Path(bag_file)
+    if not bag_file.exists():
+        raise ValueError(f"{bag_file} does not exist")
+
+    def extract_topic(bag_file: Path, topic: str, verbose=verbose) -> None:
+        if verbose:
+            rprint(f"Extracting {topic}...")
+        dataset = Dataset.from_file(bag_file, topic=topic, keep_zeros=False)
+        if verbose:
+            rprint(f"Dataset loaded with len: {len(dataset)}")
+            rprint("Writing to file...")
+        dataset.to_file(
+            Path(bag_file.parent / "pointcloudset" / topic[1:].replace("/", "_")),
+            use_orig_filename=True,
+        )
+
+    for topic in tqdm(topics):
+        extract_topic(bag_file, topic, verbose=verbose)
 
 
 def load_pointcloudset(
@@ -80,7 +122,7 @@ def load_pointcloudset(
             return dataset
 
         rprint("Creating pointcloudset files now..")
-        extract_pcs_from_bagfile.extract(bag_path, [topic], verbose=verbose)
+        extract_pc_from_bagfile(bag_path, [topic], verbose=verbose)
 
     dataset = Dataset.from_file(pointcloudset_path)
     if verbose:
