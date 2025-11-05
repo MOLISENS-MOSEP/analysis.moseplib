@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
-from moseplib.data import config, read_rosbag
-
 import io
-import pandas as pd
 from pathlib import Path
 from PIL import Image
 
+import pandas as pd
+from rich import print as rprint
+
+from moseplib.data import config, read_rosbag
+from mosep_analysis.data.config import PROCESSED_DATA_FOLDER
 # if config_variable == "highlevel":
 #     from rosbags.highlevel import AnyReader as ReaderClass
 # elif config_variable == "rosbag2":
@@ -15,10 +17,96 @@ from PIL import Image
 #     raise ValueError("Invalid config variable value")
 
 
-def load(
+def load_timeseries(
+    data_dir: Path,
+    bag_name: str,
+    topics: str | tuple[str],
+    safe_parquet: bool = True,
+    force_reload: bool = False,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    if isinstance(topics, str):
+        topics = (topics,)
+
+    if not (1 <= len(topics) <= 2):
+        raise ValueError("topics must be a string or tuple of one or two topic names.")
+
+    data_dir = Path(data_dir)
+    bag_path = data_dir / bag_name
+
+    parquet_path = PROCESSED_DATA_FOLDER / f"weather_df_{bag_name}.parquet"
+    if verbose:
+        rprint(f"Searching for pointcloudset files in:\n{parquet_path}")
+
+    if parquet_path.exists() and not force_reload:
+        rprint("Found parquet files, loading timeseries data...")
+        return pd.read_parquet(parquet_path)
+
+    rprint(f"No pointcloudset files found for: {bag_name}.")
+    if not bag_path.exists():
+        raise FileNotFoundError(f"No pointcloudset files found and {bag_path} does not exist")
+
+    rprint(f"Loading timeseries data from bag file: {bag_path}...")
+    df = combine_and_resample_ws_data(bag_path, topics[0], topics[1] if len(topics) == 2 else None)
+    if verbose:
+        rprint("Loaded data with shape:", df.shape)
+
+    if safe_parquet:
+        df.to_parquet(parquet_path)
+    else:
+        # Calculate on the fly
+        rprint("Loading bag file on the fly..")
+
+    return df
+
+
+def combine_and_resample_ws_data(bag_path: Path, topic_a: str, topic_b: str | None = None) -> pd.DataFrame:
+    df_ws_a = deserialize(
+        bag_path,
+        topic_a,
+        config.PATH_TO_LUFFT_MSGS,
+        timestamp_source="msg",
+    )
+    # Unify timestamp to concat the dataframes
+    # Set the ferquency of the index to 1s
+    df_ws_a = df_ws_a.resample("1s").nearest()
+
+    # If topic_b is provided, deserialize and resample it as well and combine with df_ws_a
+    if topic_b is not None:
+        df_ws_b = deserialize(
+            bag_path,
+            topic_b,
+            config.PATH_TO_LUFFT_MSGS,
+            timestamp_source="msg",
+        )
+
+        df_ws_b = df_ws_b.resample("1s").nearest()
+        df = pd.concat([df_ws_a, df_ws_b], axis=1)
+    else:
+        df = df_ws_a
+
+    # Shift the intensity of the precipitation to the past by 60s to match the rest of the data.
+    if "intensity_hour" in df.precipitation.columns:
+        df.loc[:, ("precipitation", "intensity_hour_shifted")] = df.precipitation.intensity_hour.shift(
+            periods=-60, freq="s"
+        )
+        df.loc[:, ("precipitation", "intensity_hour_shifted")] = df.loc[
+            :, ("precipitation", "intensity_hour_shifted")
+        ].fillna(0.0)
+
+    # remove lines with nan
+    if df.isna().sum().max() <= 1:
+        df = df.dropna()
+    else:
+        raise ValueError("Too many nan values in the dataframe")
+
+    return df
+
+
+def deserialize(
     bag_file: Path,
     topic: str,
-    path_to_custom_msgs: Path = None,
+    path_to_custom_msgs: Path | None = None,
     timestamp_source: str = "header",
     has_header: bool = True,
 ) -> pd.DataFrame:
@@ -61,7 +149,7 @@ if __name__ == "__main__":
         "/workspaces/MOLISENSext_analysis/data/0external/ubuntu2004_bagfiles/molisens_met_2023_03_07-14_05_21_converted"
     )
     # register_custom_ros_msgs(config.PATH_TO_LUFFT_MSGS, verbose=False)
-    df = load(
+    df = deserialize(
         "/workspaces/MOLISENSext_analysis/data/0external/ubuntu2004_bagfiles/molisens_met_2023_03_07-14_05_21_converted",
         # "/workspaces/MOLISENSext_analysis/data/2interim/bad_aussee/data/molisens_met_2023_04_14-09_23_34_converted",
         "/sensing/aws/ws100_measurements",

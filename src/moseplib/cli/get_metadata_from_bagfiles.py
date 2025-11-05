@@ -55,7 +55,7 @@ def extract_metadata(bag_path: Union[str, Path]) -> dict[str, object]:
     bag_path = Path(bag_path)
     meta: dict[str, object] = {"note_type": "measurement", "bag_size": get_total_mcap_size(bag_path)}
 
-    df = timeseries_processing.load(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
+    df = timeseries_processing.deserialize(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
     precip_stats = {
         "min": df.precipitation.intensity_hour.min(),
         "max": df.precipitation.intensity_hour.max(),
@@ -80,7 +80,7 @@ def extract_metadata(bag_path: Union[str, Path]) -> dict[str, object]:
 
 def plot_precipitation_data(bag_path: Union[str, Path]) -> Figure:
     bag_path = Path(bag_path)
-    df = timeseries_processing.load(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
+    df = timeseries_processing.deserialize(bag_path, "/sensing/aws/ws100_measurements", config.PATH_TO_LUFFT_MSGS)
     fig = plt.figure(figsize=(12, 20))
     plot_data = df.precipitation.loc[:, "absolute":"hail_particles"]
     axs = plot_data.plot(

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 import warnings
 
+from dask import delayed, compute
 import pandas as pd
 from pointcloudset import Dataset, PointCloud
 from pointcloudset.pipeline.delayed_result import DelayedResult
@@ -75,6 +76,7 @@ def load_pointcloudset(
     safe_parquet: bool = True,
     keep_zeros: bool = False,
     invert_axes: list[str] | None = None,
+    skip_initial_frames: int = 0,
     verbose: bool = False,
 ) -> Dataset | DelayedResult:
     """
@@ -88,6 +90,8 @@ def load_pointcloudset(
             available. Defaults to True.
         keep_zeros (bool, optional): Whether to keep points with zero coordinates. Defaults to False.
         invert_axes (list, optional): List of axes to invert (Multiply by -1). Defaults to None.
+        skip_initial_frames (int, optional): Number of initial frames to skip in the dataset. Useful for ignoring
+            startup transients. Defaults to 0.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
 
     Returns:
@@ -104,14 +108,14 @@ def load_pointcloudset(
         rprint(f"Searching for pointcloudset files in:\n{pointcloudset_path}")
 
     if not pointcloudset_path.exists():
-        print(f"No pointcloudset files found for topic: {topic}.")
+        rprint(f"No pointcloudset files found for topic: {topic}.")
 
         if not bag_path.exists():
             raise FileNotFoundError(f"No pointcloudset files found and {bag_path} does not exist")
 
         if not safe_parquet:
             # Calculate on the fly
-            print("Loading bag file on the fly..")
+            rprint("Loading bag file on the fly..")
             dataset = Dataset.from_file(
                 bag_path,
                 topic=topic,
@@ -135,12 +139,12 @@ def load_pointcloudset(
             missing_axis = [elem for elem in invert_axes if elem not in dataset.daskdataframe.columns]
             if missing_axis:
                 raise ValueError(f"These axis are not in present in dataset: {missing_axis}")
-            print("Inverting axes:", invert_axes)
+            rprint("Inverting axes:", invert_axes)
             dataset = dataset.apply(_invert_axes, axes=invert_axes)  # type: ignore
         else:
             warnings.warn("invert_axes is ignored for delayed datasets. Compute the dataset first to use invert_axes.")
 
-    return dataset
+    return dataset[skip_initial_frames:]
 
 
 def _invert_axes(frame: PointCloud, axes: list[str]) -> PointCloud:
@@ -164,6 +168,26 @@ def get_dataset_statistics(dataset: Dataset):
     pass
 
 
+def _change_dtypes(pc: PointCloud) -> PointCloud:
+    """Change dtypes of certain columns to avoid issues during resampling. Especially for 'sum' aggregation"""
+    dtype_mappings = {
+        "intensity": "float64",
+        "reflectivity": "uint64",
+        "ambient": "uint64",
+    }
+    for field, new_dtype in dtype_mappings.items():
+        if field in pc.data.columns:
+            pc.data[field] = pc.data[field].astype(new_dtype)
+    return pc
+
+
+def _drop_t(pc: PointCloud) -> PointCloud:
+    """Drop the 't' column from a PointCloud if it exists as it makes no sense in a resampled context."""
+    if "t" in pc.data.columns:
+        pc.data = pc.data.drop(columns=["t"])
+    return pc
+
+
 def resample_dataset(ds: Dataset, resampling_period: str, extra_statistics: list | None = None) -> dict[str, Dataset]:
     """Resample a dataset to a given period and calculate statistics for each resampled point cloud.
 
@@ -179,6 +203,8 @@ def resample_dataset(ds: Dataset, resampling_period: str, extra_statistics: list
     Returns:
         dict[Dataset]: A dictionary containing the resampled datasets for each statistic.
     """
+    # prepare dataset by changing dtypes and dropping t column
+    ds = ds.apply(_change_dtypes).apply(_drop_t)
 
     # Ensure that mean is always calculated. Necessary for positioning aggregated points in space (  x, y, z values).
     statistics = ["mean"]
