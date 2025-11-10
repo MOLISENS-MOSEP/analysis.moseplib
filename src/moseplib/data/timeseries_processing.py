@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 from PIL import Image
+from warnings import warn
 
 import pandas as pd
 from rich import print as rprint
@@ -18,9 +19,10 @@ from mosep_analysis.data.config import PROCESSED_DATA_FOLDER
 
 
 def load_timeseries(
-    data_dir: Path,
+    data_dir: Path | str,
     bag_name: str,
-    topics: str | tuple[str],
+    save_path: Path,
+    topics: str | tuple[str, ...],
     safe_parquet: bool = True,
     force_reload: bool = False,
     verbose: bool = False,
@@ -34,13 +36,12 @@ def load_timeseries(
     data_dir = Path(data_dir)
     bag_path = data_dir / bag_name
 
-    parquet_path = PROCESSED_DATA_FOLDER / f"weather_df_{bag_name}.parquet"
     if verbose:
-        rprint(f"Searching for pointcloudset files in:\n{parquet_path}")
+        rprint(f"Searching for pointcloudset files in:\n{save_path}")
 
-    if parquet_path.exists() and not force_reload:
+    if save_path.exists() and not force_reload:
         rprint("Found parquet files, loading timeseries data...")
-        return pd.read_parquet(parquet_path)
+        return pd.read_parquet(save_path)
 
     rprint(f"No pointcloudset files found for: {bag_name}.")
     if not bag_path.exists():
@@ -52,7 +53,7 @@ def load_timeseries(
         rprint("Loaded data with shape:", df.shape)
 
     if safe_parquet:
-        df.to_parquet(parquet_path)
+        df.to_parquet(save_path)
     else:
         # Calculate on the fly
         rprint("Loading bag file on the fly..")
@@ -98,7 +99,7 @@ def combine_and_resample_ws_data(bag_path: Path, topic_a: str, topic_b: str | No
     if df.isna().sum().max() <= 1:
         df = df.dropna()
     else:
-        raise ValueError("Too many nan values in the dataframe")
+        warn(f"Warning: {df.isna().sum().max()} NaN values found in the data. Use df.isna().sum() to see details.")
 
     return df
 
