@@ -18,22 +18,13 @@ from moseplib.data import config, read_rosbag
 
 
 def load_timeseries(
-    data_dir: Path | str,
-    bag_name: str,
-    topics: str | tuple[str, ...],
+    data_dir: Path | str | None = None,
+    bag_name: str | None = None,
+    topics: str | tuple[str, ...] | None = None,
     safe_parquet: None | Path = None,
     force_reload: bool = False,
     verbose: bool = False,
-) -> pd.DataFrame:
-    if isinstance(topics, str):
-        topics = (topics,)
-
-    if not (1 <= len(topics) <= 2):
-        raise ValueError("topics must be a string or tuple of one or two topic names.")
-
-    data_dir = Path(data_dir)
-    bag_path = data_dir / bag_name
-
+) -> pd.DataFrame | None:
     if safe_parquet is not None:
         if verbose:
             rprint(f"Searching for pointcloudset files in:\n{safe_parquet}")
@@ -42,22 +33,33 @@ def load_timeseries(
             rprint("Found parquet files, loading timeseries data...")
             return pd.read_parquet(safe_parquet)
 
-    rprint(f"No pointcloudset files found for: {bag_name}.")
-    if not bag_path.exists():
-        raise FileNotFoundError(f"No pointcloudset files found and {bag_path} does not exist")
+        rprint(f"No pointcloudset files found for: {bag_name}.")
 
-    rprint(f"Loading timeseries data from bag file: {bag_path}...")
-    df = combine_and_resample_ws_data(bag_path, topics[0], topics[1] if len(topics) == 2 else None)
-    if verbose:
-        rprint("Loaded data with shape:", df.shape)
+    if data_dir is not None and bag_name is not None and topics is not None:
+        if isinstance(topics, str):
+            topics = (topics,)
 
-    if safe_parquet:
-        df.to_parquet(safe_parquet)
-    else:
-        # Calculate on the fly
-        rprint("Loading bag file on the fly..")
+        if not (1 <= len(topics) <= 2):
+            raise ValueError("topics must be a string or tuple of one or two topic names.")
 
-    return df
+        data_dir = Path(data_dir)
+        bag_path = data_dir / bag_name
+        if not bag_path.exists():
+            raise FileNotFoundError(f"No pointcloudset files found and {bag_path} does not exist")
+
+        rprint(f"Loading timeseries data from bag file: {bag_path}...")
+        df = combine_and_resample_ws_data(bag_path, topics[0], topics[1] if len(topics) == 2 else None)
+        if verbose:
+            rprint("Loaded data with shape:", df.shape)
+
+        if safe_parquet:
+            df.to_parquet(safe_parquet)
+        else:
+            # Calculate on the fly
+            rprint("Loading bag file on the fly..")
+
+        return df
+    print("No DataFrame loaded! Either provide safe_parquet or data_dir, bag_name and topics.")
 
 
 def combine_and_resample_ws_data(bag_path: Path, topic_a: str, topic_b: str | None = None) -> pd.DataFrame:
