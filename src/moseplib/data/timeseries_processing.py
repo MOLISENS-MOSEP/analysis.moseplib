@@ -9,7 +9,6 @@ import pandas as pd
 from rich import print as rprint
 
 from moseplib.data import config, read_rosbag
-from mosep_analysis.data.config import PROCESSED_DATA_FOLDER
 # if config_variable == "highlevel":
 #     from rosbags.highlevel import AnyReader as ReaderClass
 # elif config_variable == "rosbag2":
@@ -21,9 +20,8 @@ from mosep_analysis.data.config import PROCESSED_DATA_FOLDER
 def load_timeseries(
     data_dir: Path | str,
     bag_name: str,
-    save_path: Path,
     topics: str | tuple[str, ...],
-    safe_parquet: bool = True,
+    safe_parquet: None | Path = None,
     force_reload: bool = False,
     verbose: bool = False,
 ) -> pd.DataFrame:
@@ -36,12 +34,13 @@ def load_timeseries(
     data_dir = Path(data_dir)
     bag_path = data_dir / bag_name
 
-    if verbose:
-        rprint(f"Searching for pointcloudset files in:\n{save_path}")
+    if safe_parquet is not None:
+        if verbose:
+            rprint(f"Searching for pointcloudset files in:\n{safe_parquet}")
 
-    if save_path.exists() and not force_reload:
-        rprint("Found parquet files, loading timeseries data...")
-        return pd.read_parquet(save_path)
+        if safe_parquet.exists() and not force_reload:
+            rprint("Found parquet files, loading timeseries data...")
+            return pd.read_parquet(safe_parquet)
 
     rprint(f"No pointcloudset files found for: {bag_name}.")
     if not bag_path.exists():
@@ -53,7 +52,7 @@ def load_timeseries(
         rprint("Loaded data with shape:", df.shape)
 
     if safe_parquet:
-        df.to_parquet(save_path)
+        df.to_parquet(safe_parquet)
     else:
         # Calculate on the fly
         rprint("Loading bag file on the fly..")
