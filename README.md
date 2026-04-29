@@ -1,6 +1,6 @@
 # moseplib
 
-Core Python library for reading, processing, and analyzing sensor data from the MOSEP (Modular Multi-Sensor System for Environment Perception) measurement setup. Provides tools to extract point cloud and weather station data from ROS2 bag files and convert them into analysis-ready formats.
+Core Python library for reading, processing, and analyzing sensor data from the MOSEP (Modular Hardware and Software System for Multi-Sensor Environment Perception) measurement setup. Provides tools to extract point cloud and weather station data from ROS2 bag files and convert them into analysis-ready formats.
 
 ## Features
 
